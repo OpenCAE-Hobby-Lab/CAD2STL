@@ -1,73 +1,57 @@
 # CAD2STL
 
-色付きSTEPの面を色ごとに分け，OpenFOAMの境界領域に対応するSTLへ変換します．面数・色数は入力から取得します．CLIとローカルWeb画面を使用できます．
+色付きSTEPの面を色ごとのSTLへ変換する、FreeCAD不要のプログラムです。Open CASCADE Technology（OCCT）を直接利用します。面数・色数は入力から取得し、境界名の既定値は `color_RRGGBB` です。
 
-## 必要な環境
+## Windows版の使い方
 
-WindowsとFreeCAD 1.0.2の同梱Pythonで動作を確認しています．追加のpipパッケージは不要です．他のFreeCAD版・OSについては未検証です．
+配布フォルダ全体を展開し、`CAD2STL.exe` をダブルクリックしてください。ブラウザにローカルWeb画面を開きます。STEPを選び「色を調べる」から変換します。FreeCAD・Pythonの別途インストールは不要です。停止はコンソールのCtrl+Cです。
 
-## Web画面
+`CAD2STL.exe` と `_internal` フォルダは一緒に置いてください。Windows x64向けです。別PCでの実機確認は未実施です。
 
-このリポジトリのフォルダでPowerShellを開き，次を実行します．
-
-```powershell
-.\Start-Web.ps1
-```
-
-ブラウザで `http://127.0.0.1:8765` を開き，STEPを選択して「色を調べる」から変換を進めます．境界名の既定値は `color_RRGGBB` です．停止はターミナルでCtrl+Cです．
-
-FreeCADの場所が異なる場合は指定します．
+Webは127.0.0.1でのみ待ち受けます。外部への形状送信機能はありません。入力は25 MiBまで、変換は120秒までです。入力・結果・ログは `%LOCALAPPDATA%/CAD2STL/work/web-jobs/` に残ります。不要になったジョブフォルダは利用者が削除してください。
 
 ```powershell
-.\Start-Web.ps1 -FreeCADPython 'D:\FreeCAD\bin\python.exe'
+.\CAD2STL.exe serve --port 8765
+.\CAD2STL.exe inspect 'D:\CAD-local\model.step' --report 'D:\CAD-local\inspection.json'
+.\CAD2STL.exe convert 'D:\CAD-local\model.step' --output 'D:\CAD-local\case01' --scale 0.001
 ```
 
-Web画面は127.0.0.1でのみ待ち受けます．アップロードは25 MiBまで，処理は120秒までです．ファイルを外部へ送信する機能はありません．入力と生成物はローカルの `work/web-jobs/` に保存されます．
+実業務の入力・出力はGitリポジトリの外に置いてください。既存の出力フォルダやJSONは上書きしません。inspectの保存先の親フォルダは事前に作成してください。
 
-## CLI
-
-実業務の入力と出力は，Gitリポジトリの外に置いてください．以下は配置例です．
-
-```powershell
-$cadPython = 'C:\Program Files\FreeCAD 1.0\bin\python.exe'
-& $cadPython experiments/freecad/cad2stl.py inspect 'D:\CAD2STL-local\input\model.step' --report 'D:\CAD2STL-local\inspection.json'
-& $cadPython experiments/freecad/cad2stl.py convert 'D:\CAD2STL-local\input\model.step' --output 'D:\CAD2STL-local\output\case01' --scale 0.001
-```
-
-inspectの保存先の親フォルダは事前に作成してください．既存の出力フォルダやJSONは上書きしません．
-
-境界名を指定する場合は，`experiments/freecad/example-colors.json` の形式で色対応表を作成します．
-
-```powershell
-& $cadPython experiments/freecad/cad2stl.py convert 'D:\CAD2STL-local\input\model.step' --map 'D:\CAD2STL-local\colors.json' --output 'D:\CAD2STL-local\output\case02' --scale 0.001 --linear-deflection 0.05 --angular-deflection 0.2
-```
-
-対応表を指定した場合，未定義色を含む入力は拒否します．省略した場合は検出した全色から名前を生成します．長さの近似誤差はmm，角度はradです．
+`--map colors.json` で `example-colors.json` の形式の対応表を指定できます。省略すると検出した全色から名前を生成します。対応表にない色と未着色面は拒否します。部品色を面が継承し、個別の面色があればそれを優先します。色はsRGB各成分を8 bitへ丸めます。
 
 ## 出力と品質確認
 
-- 色別のASCII STLと，全色を含む `all_regions.stl`
-- 面と色の対応，面積，三角形数，入力・出力のハッシュ，幾何検査の問題を記録する `report.json`
-- OpenFOAMの設定に組み込む `geometry.foam` と `refinementSurfaces.foam` の断片
+- 色別のASCII STLと、全色のsolid領域を含む `all_regions.stl`
+- 面と色の対応、面積、三角形数、入力・出力ハッシュ、幾何検査結果を含む `report.json`
+- OpenFOAM辞書の断片 `geometry.foam` と `refinementSurfaces.foam`
 
-STEPの長さは読込時にmmへ正規化され，指定倍率で出力されます．`--scale 0.001` はmへの換算です．STL自体に単位情報は含まれません．
+STEPの長さは読込時にmmへ正規化します。`--scale 0.001` はmへの換算です。STL自体に単位情報はありません。三角化設定は `--linear-deflection 0.05`（mm）、`--angular-deflection 0.2`（rad）で変更できます。
 
-色別STLと `all_regions.stl` を同時に同じgeometryへ登録しないでください．形状が二重になります．辞書断片は完全な計算ケースや物理境界条件ではありません．
+色別STLと `all_regions.stl` を同じgeometryへ同時登録すると形状が二重になります。辞書断片は完全な計算ケースや物理境界条件ではありません。
 
-**STLの生成成功は，OpenFOAMでの表面品質合格を意味しません．** `report.json` の幾何問題を確認し，次のような独立した検査を行ってください．
+**生成成功はOpenFOAMでの品質合格を意味しません。** `report.json` の幾何問題を確認し、次のような表面検査を行ってください。
 
 ```bash
 surfaceCheck -checkSelfIntersection all_regions.stl
 ```
 
-終了コードだけでなく，自己交差，不正三角形，閉鎖性，領域名，法線の一貫性をログで確認します．色別パッチ単体は開いた面で構いません．その後，利用するケースでsnappyHexMeshとcheckMeshを確認してください．細分化だけで幾何不整合が解消するとは限りません．
+終了コードに加え、自己交差、不正三角形、閉鎖性、領域名、法線をログで確認します。色別パッチ単体は開いた面で構いません。その後、利用するケースでsnappyHexMeshとcheckMeshを確認してください。自動修復・内部接触面の除去・流体側法線の推定は行いません。
 
-## 制約
+## 入力形式
 
-入力は `.step` / `.stp` です．Parasolidの `.x_t` / `.x_b` の直接読込は未対応です．面色を保持したSTEPの書出しは元CAD側で確認してください．
+`.step` / `.stp` に対応します。Parasolid `.x_t` / `.x_b` の直接読込は未対応です。SpaceClaim / Solid Edge側で面色を保持したSTEPを書き出してください。FreeCAD非依存化によってParasolid読込機能が追加されるわけではありません。
 
-RGBは各成分8 bitへ丸めます．色の欠落を検出するため `#01FE02` を予約しており，この色を含む入力は拒否します．自動修復，内部接触面の削除，流体側の法線の推定は行いません．
+## ソースから実行・ビルド
 
-## データをコミットしない運用
+Python 3.12 x64を使います。実行用依存は `requirements.txt` に固定しています。
 
-このリポジトリにはプログラムと利用手順のみを配置します．CAD，STL，出力ZIP，ログ，試験結果はGitの外で管理してください．`.gitignore` にはそれらの除外設定を含めていますが，`git add -f` で回避できるため，コミット前にステージ内容を確認してください．
+```powershell
+py -3.12 -m venv .venv
+.venv/Scripts/python.exe -m pip install -r requirements.txt
+.venv/Scripts/python.exe cad2stl.py
+```
+
+Windows配布フォルダは `Build-Windows.ps1` で作成できます。ビルド時はPyPIから依存を取得します。実行時のインターネット接続は不要です。`dist/CAD2STL/` をフォルダごとコピーします。第三者コンポーネントについては `THIRD_PARTY_NOTICES.md` を参照してください。
+
+公開対象はプログラム、設定例、利用・ビルド手順です。CADデータ、変換結果、テスト、研究報告、エージェントの設定は含めません。

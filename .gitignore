@@ -50,6 +50,8 @@ deliverables/
 __pycache__/
 *.pyc
 .venv/
+build/
+dist/
 .pytest_cache/
 *.tmp
 
