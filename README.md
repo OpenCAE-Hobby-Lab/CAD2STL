@@ -4,7 +4,11 @@
 
 ## Windows版の使い方
 
-配布フォルダ全体を展開し、`CAD2STL.exe` をダブルクリックしてください。ブラウザにローカルWeb画面を開きます。STEPを選び「色を調べる」から変換します。FreeCAD・Pythonの別途インストールは不要です。停止はコンソールのCtrl+Cです。
+配布フォルダ全体を展開し、`CAD2STL.exe` をダブルクリックしてください。ブラウザにローカルWeb画面を開きます。FreeCAD・Pythonの別途インストールは不要です。停止はコンソールのCtrl+Cです。
+
+1. STEPファイルを選び、「色を調べる」を押します。
+2. 一覧の色見本、カラーコード、面数を確認し、各色のSTL名を編集します。初期値は `color_RRGGBB` です。
+3. 色別の個別ファイル、または1つのSTLファイルを選んで変換します。個別出力では設定した名前に `.stl` が付き、単一出力では設定した名前が `all_regions.stl` 内の各 `solid` 名になります。
 
 `CAD2STL.exe` と `_internal` フォルダは一緒に置いてください。Windows x64向けです。別PCでの実機確認は未実施です。
 
@@ -20,15 +24,17 @@ Webは127.0.0.1でのみ待ち受けます。外部への形状送信機能は�
 
 `--map colors.json` で `example-colors.json` の形式の対応表を指定できます。省略すると検出した全色から名前を生成します。対応表にない色と未着色面は拒否します。部品色を面が継承し、個別の面色があればそれを優先します。色はsRGB各成分を8 bitへ丸めます。
 
+CLIでは `--output-mode separate` で色別ファイル、`--output-mode combined` で単一ファイルを出力します。CLIで省略した場合は従来どおり両方を出力します（`--output-mode both`）。
+
 ## 出力と品質確認
 
-- 色別のASCII STLと、全色のsolid領域を含む `all_regions.stl`
+- 選択した形式のASCII STL
 - 面と色の対応、面積、三角形数、入力・出力ハッシュ、幾何検査結果を含む `report.json`
 - OpenFOAM辞書の断片 `geometry.foam` と `refinementSurfaces.foam`
 
 STEPの長さは読込時にmmへ正規化します。`--scale 0.001` はmへの換算です。STL自体に単位情報はありません。三角化設定は `--linear-deflection 0.05`（mm）、`--angular-deflection 0.2`（rad）で変更できます。
 
-色別STLと `all_regions.stl` を同じgeometryへ同時登録すると形状が二重になります。辞書断片は完全な計算ケースや物理境界条件ではありません。
+辞書断片は選択した出力形式に対応します。両方を出力した場合、辞書断片には色別STLを登録します。色別STLと `all_regions.stl` を同じgeometryへ同時登録すると形状が二重になります。単一出力の `report.json` では、各パッチの `file` と `sha256` が同じ `all_regions.stl` を参照します。
 
 **生成成功はOpenFOAMでの品質合格を意味しません。** `report.json` の幾何問題を確認し、次のような表面検査を行ってください。
 

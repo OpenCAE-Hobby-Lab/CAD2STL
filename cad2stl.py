@@ -12,7 +12,7 @@ import shutil
 import sys
 import tempfile
 
-VERSION = '0.3.0'
+VERSION = '0.4.0'
 import cad_backend as backend
 MISSING_COLOR = backend.MISSING_COLOR
 
@@ -114,7 +114,10 @@ def write_solid(stream, name, triangles):
     stream.write(f'endsolid {name}\n')
 
 
-def convert(source, output, color_map, scale, linear_deflection=.05, angular_deflection=.2):
+def convert(source, output, color_map, scale, linear_deflection=.05, angular_deflection=.2,
+            *, output_mode='both'):
+    if output_mode not in ('separate', 'combined', 'both'):
+        raise ConversionError('Output mode must be separate, combined or both')
     scale = positive(scale, 'scale (mm to output units)')
     positive(linear_deflection, 'linear_deflection_mm')
     positive(angular_deflection, 'angular_deflection_rad')
@@ -149,6 +152,7 @@ def convert(source, output, color_map, scale, linear_deflection=.05, angular_def
                       scale_from_mm=scale, linear_deflection_mm=linear_deflection,
                       angular_deflection_rad=angular_deflection, color_quantization='nearest 8-bit RGB',
                       color_map=color_map, unused_colors=sorted(color_map.keys()-used), faces=faces,
+                      output_mode=output_mode,
                       status='generated_requires_geometry_review' if issues else 'generated_requires_surface_validation',
                       geometry_issues=issues, openfoam_quality_verified=False,
                       warnings=['Individual boundary patches may be open.',
@@ -158,24 +162,41 @@ def convert(source, output, color_map, scale, linear_deflection=.05, angular_def
     output.parent.mkdir(parents=True, exist_ok=True)
     stage = Path(tempfile.mkdtemp(prefix='.cad2stl-incomplete-', dir=output.parent))
     try:
-        for name, triangles in sorted(groups.items()):
-            path = stage / f'{name}.stl'
-            with path.open('x', encoding='ascii', newline='\n') as stream:
-                write_solid(stream, name, triangles)
+        ordered_groups = sorted(groups.items())
+        combined = stage / 'all_regions.stl'
+        if output_mode != 'separate':
+            with combined.open('x', encoding='ascii', newline='\n') as stream:
+                for name, triangles in ordered_groups:
+                    write_solid(stream, name, triangles)
+            combined_hash = sha256(combined)
+        for name, triangles in ordered_groups:
+            if output_mode == 'combined':
+                path, file_hash = combined, combined_hash
+            else:
+                path = stage / f'{name}.stl'
+                with path.open('x', encoding='ascii', newline='\n') as stream:
+                    write_solid(stream, name, triangles)
+                file_hash = sha256(path)
             points = [p for t in triangles for p in t]
             report['patches'][name] = dict(file=path.name, triangles=len(triangles),
                 mesh_area=sum(triangle_geometry(t)[1] for t in triangles),
                 bbox=[[min(p[i] for p in points) for i in range(3)],
-                      [max(p[i] for p in points) for i in range(3)]], sha256=sha256(path))
-        with (stage/'all_regions.stl').open('x', encoding='ascii', newline='\n') as stream:
-            for name, triangles in sorted(groups.items()):
-                write_solid(stream, name, triangles)
-        geometry = ['// Insert into snappyHexMeshDict. Do not also load all_regions.stl.', 'geometry', '{']
+                      [max(p[i] for p in points) for i in range(3)]], sha256=file_hash)
+        geometry = ['// Insert into snappyHexMeshDict.', 'geometry', '{']
         refinement = ['// Insert inside castellatedMeshControls; choose levels for your case.', 'refinementSurfaces', '{']
-        for name in sorted(groups):
-            geometry += [f'    {name}.stl', '    {', '        type triSurfaceMesh;', f'        name {name};',
-                         f'        regions {{ {name} {{ name {name}; }} }}', '    }']
-            refinement += [f'    {name} {{ level (1 1); patchInfo {{ type patch; }} }}']
+        if output_mode == 'combined':
+            geometry += ['    all_regions.stl', '    {', '        type triSurfaceMesh;',
+                         '        name all_regions;', '        regions', '        {']
+            geometry += [f'            {name} {{ name {name}; }}' for name, _ in ordered_groups]
+            geometry += ['        }', '    }']
+            refinement += ['    all_regions { level (1 1); patchInfo { type patch; } }']
+        else:
+            if output_mode == 'both':
+                geometry[0] += ' Do not also load all_regions.stl.'
+            for name, _ in ordered_groups:
+                geometry += [f'    {name}.stl', '    {', '        type triSurfaceMesh;', f'        name {name};',
+                             f'        regions {{ {name} {{ name {name}; }} }}', '    }']
+                refinement += [f'    {name} {{ level (1 1); patchInfo {{ type patch; }} }}']
         (stage/'geometry.foam').write_text('\n'.join(geometry+['}', '']), encoding='ascii')
         (stage/'refinementSurfaces.foam').write_text('\n'.join(refinement+['}', '']), encoding='ascii')
         write_json(stage/'report.json', report)
@@ -204,6 +225,8 @@ def main(argv=None):
     p.add_argument('input', type=Path)
     p.add_argument('--output', required=True, type=Path)
     p.add_argument('--map', type=Path, help='Optional #RRGGBB-to-boundary JSON; omitted: color_RRGGBB names')
+    p.add_argument('--output-mode', choices=('separate', 'combined', 'both'), default='both',
+                   help='Choose per-color files, one multi-region file, or both (default)')
     p.add_argument('--scale', required=True, type=float, help='Multiply normalized millimetres; 0.001 gives metres')
     p.add_argument('--linear-deflection', type=float, default=.05, help='millimetres')
     p.add_argument('--angular-deflection', type=float, default=.2, help='radians')
@@ -216,7 +239,7 @@ def main(argv=None):
         else:
             mapping = json.loads(args.map.read_text(encoding='utf-8-sig')) if args.map else None
             report = convert(args.input, args.output, mapping, args.scale,
-                             args.linear_deflection, args.angular_deflection)
+                             args.linear_deflection, args.angular_deflection, output_mode=args.output_mode)
             if report['geometry_issues']:
                 print('CAD2STL WARNING: input OCCT checks found geometry issues. Review report.json; output is not validated for OpenFOAM.', file=sys.stderr)
         print('CAD2STL: generation completed; inspect report.json and validate surface quality before use')
